@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFPageProxy } from 'pdfjs-dist';
 import type { HitRect, RedactionBox, Tool } from '../types';
+import type { RegionRect } from '../pdf/repeatRegion';
 import { uid } from '../types';
 
 /** 视口（CSS 像素）坐标系中的矩形 */
@@ -19,11 +20,12 @@ const MIN_SIZE = 4;
 
 type DragState =
   | { kind: 'draw'; startX: number; startY: number }
+  | { kind: 'pick-region'; startX: number; startY: number }
   | { kind: 'move'; id: string; rect: Rect; startX: number; startY: number }
   | { kind: 'resize'; id: string; handle: Handle; rect: Rect };
 
 interface Draft {
-  /** null 表示正在绘制新框 */
+  /** null 表示正在绘制新框 / 拾取重复区域 */
   id: string | null;
   rect: Rect;
 }
@@ -32,6 +34,13 @@ interface Highlight {
   id: string;
   rects: HitRect[];
   checked: boolean;
+}
+
+/** 跨页重复区域的画布叠层（PDF 页面坐标），仅用于预览，不属于现有遮盖 */
+export interface RepeatOverlay {
+  id: string;
+  rect: RegionRect;
+  kind: 'source' | 'applied' | 'skipped-duplicate' | 'skipped-degenerate';
 }
 
 interface Props {
@@ -44,9 +53,13 @@ interface Props {
   selectedId: string | null;
   /** 文本查找候选（PDF 页面坐标），画布上高亮显示，不参与交互 */
   highlights: Highlight[];
+  /** 跨页重复区域的源框 / 预览框（PDF 页面坐标），仅展示不参与交互 */
+  repeatOverlays: RepeatOverlay[];
   onSelect(id: string | null): void;
   onAdd(box: RedactionBox): void;
   onChange(box: RedactionBox): void;
+  /** repeat 模式下框选结束：回传拾取到的区域（PDF 页面坐标），不改动现有遮盖 */
+  onPickRegion(region: RegionRect): void;
 }
 
 function normalizeRect(r: Rect): Rect {
@@ -78,9 +91,11 @@ export function PageCanvas({
   boxes,
   selectedId,
   highlights,
+  repeatOverlays,
   onSelect,
   onAdd,
   onChange,
+  onPickRegion,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -140,17 +155,18 @@ export function PageCanvas({
   };
 
   /** 视口矩形 -> 页面坐标（用于保存） */
-  const rectToBox = (r: Rect, id: string): RedactionBox => {
+  const rectToCoords = (r: Rect): { x1: number; y1: number; x2: number; y2: number } => {
     const [ax, ay] = viewport.convertToPdfPoint(r.left, r.top);
     const [bx, by] = viewport.convertToPdfPoint(r.left + r.width, r.top + r.height);
     return {
-      id,
       x1: Math.min(ax, bx),
       y1: Math.min(ay, by),
       x2: Math.max(ax, bx),
       y2: Math.max(ay, by),
     };
   };
+
+  const rectToBox = (r: Rect, id: string): RedactionBox => ({ id, ...rectToCoords(r) });
 
   const localPoint = (clientX: number, clientY: number) => {
     const rect = overlayRef.current!.getBoundingClientRect();
@@ -163,7 +179,7 @@ export function PageCanvas({
       const drag = dragRef.current;
       if (!drag) return;
       const p = localPoint(e.clientX, e.clientY);
-      if (drag.kind === 'draw') {
+      if (drag.kind === 'draw' || drag.kind === 'pick-region') {
         setDraft({
           id: null,
           rect: normalizeRect({
@@ -200,6 +216,9 @@ export function PageCanvas({
       // 拖拽结束时才把结果换算回页面坐标并提交（产生一条撤销记录）
       if (drag.kind === 'draw') {
         onAdd(rectToBox(d.rect, uid()));
+      } else if (drag.kind === 'pick-region') {
+        // 仅拾取跨页重复区域，预览由父组件完成，不改动现有遮盖
+        onPickRegion(rectToCoords(d.rect));
       } else {
         onChange(rectToBox(d.rect, drag.id));
       }
@@ -218,6 +237,20 @@ export function PageCanvas({
     const p = localPoint(e.clientX, e.clientY);
     dragRef.current = { kind: 'draw', startX: p.x, startY: p.y };
     setDraft({ id: null, rect: { left: p.x, top: p.y, width: 0, height: 0 } });
+  };
+
+  /** repeat 模式：只拾取区域矩形，不生成遮盖 */
+  const startPickRegion = (e: React.PointerEvent) => {
+    if (tool !== 'repeat' || e.button !== 0) return;
+    const p = localPoint(e.clientX, e.clientY);
+    dragRef.current = { kind: 'pick-region', startX: p.x, startY: p.y };
+    setDraft({ id: null, rect: { left: p.x, top: p.y, width: 0, height: 0 } });
+  };
+
+  const onStagePointerDown = (e: React.PointerEvent) => {
+    if (tool === 'draw') startDraw(e);
+    else if (tool === 'repeat') startPickRegion(e);
+    else onSelect(null);
   };
 
   const startMove = (e: React.PointerEvent, box: RedactionBox) => {
@@ -243,7 +276,7 @@ export function PageCanvas({
     <div
       className={`page-stage tool-${tool}`}
       style={{ width: viewport.width, height: viewport.height }}
-      onPointerDown={tool === 'draw' ? startDraw : () => onSelect(null)}
+      onPointerDown={onStagePointerDown}
     >
       <canvas ref={canvasRef} />
       <div ref={overlayRef} className="overlay">
@@ -282,9 +315,21 @@ export function PageCanvas({
             </div>
           );
         })}
+        {/* 重复区域预览置于已有遮盖之上绘制（pointer-events:none，不影响框选） */}
+        {repeatOverlays.map((o) => {
+          const vr = hitRectToRect(o.rect);
+          return (
+            <div
+              key={o.id}
+              className={`repeat-overlay repeat-${o.kind}`}
+              style={{ left: vr.left, top: vr.top, width: vr.width, height: vr.height }}
+              title="跨页重复区域预览"
+            />
+          );
+        })}
         {draft && draft.id === null && (
           <div
-            className="redaction-box drafting"
+            className={`${tool === 'repeat' ? 'repeat-draft' : 'redaction-box drafting'}`}
             style={{
               left: draft.rect.left,
               top: draft.rect.top,

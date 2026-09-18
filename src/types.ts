@@ -14,7 +14,12 @@ export interface RedactionBox {
 /** 页码（从 1 开始） -> 该页的遮盖框列表 */
 export type RedactionMap = Record<number, RedactionBox[]>;
 
-export type Tool = 'draw' | 'select';
+/**
+ * draw: 直接绘制遮盖框（加入现有遮盖，单条撤销记录）
+ * select: 选择 / 移动 / 缩放已有遮盖框
+ * repeat: 框选跨页重复区域（页眉 / 页脚等），仅拾取预览区域，不改动现有遮盖
+ */
+export type Tool = 'draw' | 'select' | 'repeat';
 
 /**
  * 文本查找的一条命中：命中词在第 page 页上实际覆盖的一个或多个候选框

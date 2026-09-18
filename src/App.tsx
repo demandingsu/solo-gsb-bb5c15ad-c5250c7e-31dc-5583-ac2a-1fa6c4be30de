@@ -12,6 +12,13 @@ import {
   scanDocument,
 } from './pdf/textSearch';
 import {
+  applyRepeatPlan,
+  buildRepeatPlan,
+  parsePageRange,
+  type RegionRect,
+  type RepeatPlan,
+} from './pdf/repeatRegion';
+import {
   buildScheme,
   countSchemeBoxes,
   downloadScheme,
@@ -27,6 +34,7 @@ import { Toolbar } from './components/Toolbar';
 import { PageList } from './components/PageList';
 import { PageCanvas } from './components/PageCanvas';
 import { FindPanel, type FindStatus } from './components/FindPanel';
+import { RepeatPanel } from './components/RepeatPanel';
 import { ImportDialog } from './components/ImportDialog';
 
 const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -69,6 +77,18 @@ export default function App() {
   const cancelToken = useRef(0);
   const pageTextCache = useRef<Map<number, PageText>>(new Map());
 
+  // ---- 跨页重复区域 ----
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  /** 打开重复区域面板前用户使用的工具，关闭面板时恢复 */
+  const toolBeforeRepeat = useRef<Tool>('draw');
+  /** 拾取到的源区域及其所在页；null = 尚未框选 */
+  const [repeatRegion, setRepeatRegion] = useState<RegionRect | null>(null);
+  const [repeatSourcePage, setRepeatSourcePage] = useState(1);
+  const [rangeInput, setRangeInput] = useState('');
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  /** 预览计划：只做几何计算，不属于现有遮盖 */
+  const [repeatPlan, setRepeatPlan] = useState<RepeatPlan | null>(null);
+
   const {
     value: redactions,
     set: setRedactions,
@@ -96,6 +116,12 @@ export default function App() {
       setPendingScheme(null);
       scanToken.current += 1; // 中止进行中的查找扫描
       cancelToken.current += 1;
+      setRepeatOpen(false);
+      setRepeatRegion(null);
+      setRepeatPlan(null);
+      setRangeInput('');
+      setRangeError(null);
+      setTool((t) => (t === 'repeat' ? 'draw' : t));
       try {
         const data = await file.arrayBuffer();
         // 加载前在浏览器本地计算源文件 SHA-256（subtle 不可用时自动回退纯 JS 实现）
@@ -406,6 +432,84 @@ export default function App() {
     setFindOpen(false);
   }, []);
 
+  // ================= 跨页重复区域 =================
+
+  /** 打开面板：记住当前工具并切换到区域框选模式 */
+  const openRepeat = useCallback(() => {
+    setFindOpen(false);
+    setRepeatOpen(true);
+    toolBeforeRepeat.current = tool;
+    setTool('repeat');
+    setError(null);
+  }, [tool]);
+
+  /** 关闭面板（含取消预览）：恢复原工具，预览框与源区域全部丢弃，不触碰现有遮盖 */
+  const closeRepeat = useCallback(() => {
+    setRepeatOpen(false);
+    setRepeatRegion(null);
+    setRepeatPlan(null);
+    setRangeError(null);
+    setTool(toolBeforeRepeat.current === 'repeat' ? 'draw' : toolBeforeRepeat.current);
+  }, []);
+
+  /** 画布框选结束：仅拾取区域（记录所在页），不生成遮盖 */
+  const pickRepeatRegion = useCallback(
+    (region: RegionRect) => {
+      setRepeatRegion(region);
+      setRepeatSourcePage(pageNum);
+      // 源区域变化后旧预览失效，需要重新预览
+      setRepeatPlan(null);
+      setRangeError(null);
+    },
+    [pageNum],
+  );
+
+  const onRangeChange = useCallback((v: string) => {
+    setRangeInput(v);
+    setRangeError(null);
+    // 页码范围变化后旧预览已失效，清掉，避免展示上一版结果（不会改动现有遮盖）
+    setRepeatPlan(null);
+  }, []);
+
+  /** 预览：解析页码范围 -> 比例映射 / 夹取 / 0.01 点容差去重，结果只存为预览计划 */
+  const previewRepeat = useCallback(() => {
+    if (!doc || pageSizes.length !== doc.numPages) return;
+    const region = repeatRegion;
+    if (!region) return;
+    const { pages, error } = parsePageRange(rangeInput, doc.numPages);
+    if (error || !pages) {
+      setRangeError(error);
+      setRepeatPlan(null);
+      return;
+    }
+    setRangeError(null);
+    setRepeatPlan(
+      buildRepeatPlan(region, pageSizes[repeatSourcePage - 1], pages, pageSizes, redactionsRef.current),
+    );
+  }, [doc, pageSizes, repeatRegion, rangeInput, repeatSourcePage]);
+
+  /**
+   * 确认：整批一次 setRedactions（仅一条撤销记录）。applyRepeatPlan 内会再次
+   * 按 0.01 点容差去重，防止预览后现有遮盖发生变化导致重复。
+   */
+  const applyRepeat = useCallback(() => {
+    const plan = repeatPlan;
+    if (!plan || plan.appliedPages.length === 0) return;
+    const { map, added } = applyRepeatPlan(redactionsRef.current, plan);
+    if (added === 0) {
+      setNotice('目标页已存在相同遮盖（0.01 点容差内），未新增任何遮盖。');
+      closeRepeat();
+      return;
+    }
+    setRedactions(map); // 整批仅一条撤销记录
+    setSelectedId(null);
+    setNotice(
+      `跨页重复区域已应用到 ${added} 页：第 ${plan.appliedPages.join('、')} 页` +
+        `${plan.skippedPages.length > 0 ? `；跳过 ${plan.skippedPages.length} 页（重复或越界）` : ''}；可 Ctrl+Z 撤销。`,
+    );
+    closeRepeat();
+  }, [repeatPlan, setRedactions, closeRepeat]);
+
   const zoomIn = () => setZoom((z) => ZOOM_LEVELS.find((l) => l > z + 0.001) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1]);
   const zoomOut = () => setZoom((z) => [...ZOOM_LEVELS].reverse().find((l) => l < z - 0.001) ?? ZOOM_LEVELS[0]);
 
@@ -423,6 +527,54 @@ export default function App() {
   const totalCandidates = useMemo(
     () => [...findHits.values()].reduce((s, l) => s + l.length, 0),
     [findHits],
+  );
+
+  /**
+   * 当前页的跨页重复区域叠层：源区域所在页显示蓝色源框；
+   * 预览计划中属于当前页的目标页显示绿色（将加入）/ 灰色（跳过）。
+   * 全部仅用于画布预览，不在 redactions 中。
+   */
+  const currentRepeatOverlays = useMemo(() => {
+    if (!repeatOpen) return [];
+    // 源页本身也在目标范围内时，预览框与源框位置一致：展示预览结论（将加入 / 跳过）
+    const item = repeatPlan?.items.find((i) => i.page === pageNum);
+    if (item) {
+      return [
+        {
+          id: `repeat-preview-${item.page}`,
+          rect: {
+            x1: item.region.x1,
+            y1: item.region.y1,
+            x2: item.region.x2,
+            y2: item.region.y2,
+          },
+          kind: item.applied
+            ? ('applied' as const)
+            : item.skipReason === 'degenerate'
+              ? ('skipped-degenerate' as const)
+              : ('skipped-duplicate' as const),
+        },
+      ];
+    }
+    if (repeatRegion && repeatSourcePage === pageNum) {
+      return [{ id: 'repeat-source', rect: repeatRegion, kind: 'source' as const }];
+    }
+    return [];
+  }, [repeatOpen, repeatRegion, repeatSourcePage, repeatPlan, pageNum]);
+
+  /** 工具栏切换工具：切到绘制 / 选择时关闭跨页面板（其预览不保留、不改遮盖） */
+  const handleToolChange = useCallback(
+    (t: Tool) => {
+      if (t !== 'repeat' && repeatOpen) {
+        setRepeatOpen(false);
+        setRepeatRegion(null);
+        setRepeatPlan(null);
+        setRangeError(null);
+        toolBeforeRepeat.current = t;
+      }
+      setTool(t);
+    },
+    [repeatOpen],
   );
 
   const onExport = async () => {
@@ -558,10 +710,18 @@ export default function App() {
         canRedo={canRedo}
         exporting={exporting}
         findOpen={findOpen}
+        repeatOpen={repeatOpen}
         canUseScheme={!!doc && pageSizes.length === numPages && sourceHash.length === 64}
         onOpen={() => fileInputRef.current?.click()}
-        onToolChange={setTool}
-        onToggleFind={() => setFindOpen((v) => !v)}
+        onToolChange={handleToolChange}
+        onToggleFind={() => {
+          if (repeatOpen) closeRepeat();
+          setFindOpen((v) => !v);
+        }}
+        onToggleRepeat={() => {
+          if (repeatOpen) closeRepeat();
+          else openRepeat();
+        }}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onRotate={() => setRotation((r) => (r + 90) % 360)}
@@ -596,9 +756,11 @@ export default function App() {
                 boxes={boxesForPage}
                 selectedId={selectedId}
                 highlights={currentHighlights}
+                repeatOverlays={currentRepeatOverlays}
                 onSelect={setSelectedId}
                 onAdd={addBox}
                 onChange={changeBox}
+                onPickRegion={pickRepeatRegion}
               />
             )}
           </div>
@@ -624,6 +786,24 @@ export default function App() {
               noTextPages={noTextPages}
               skippedCount={skippedCount}
               appliedCount={appliedCount}
+            />
+          )}
+          {repeatOpen && (
+            <RepeatPanel
+              region={repeatRegion}
+              sourcePage={repeatSourcePage}
+              sourceWidth={pageSizes[repeatSourcePage - 1]?.width ?? 0}
+              sourceHeight={pageSizes[repeatSourcePage - 1]?.height ?? 0}
+              numPages={numPages}
+              rangeInput={rangeInput}
+              onRangeChange={onRangeChange}
+              onPreview={previewRepeat}
+              rangeError={rangeError}
+              plan={repeatPlan}
+              currentPage={pageNum}
+              onJump={setPageNum}
+              onApply={applyRepeat}
+              onClose={closeRepeat}
             />
           )}
         </div>

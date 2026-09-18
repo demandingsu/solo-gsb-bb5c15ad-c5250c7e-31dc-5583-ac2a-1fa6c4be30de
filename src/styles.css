@@ -333,6 +333,160 @@ button.primary {
   border-color: rgba(200, 90, 0, 0.95);
 }
 
+/* ---------- 跨页重复区域 ---------- */
+/* repeat 模式下已有遮盖框不拦截指针，方便在其上框选区域 */
+.tool-repeat .redaction-box {
+  pointer-events: none;
+}
+
+.tool-repeat .overlay {
+  cursor: crosshair;
+}
+
+/* 源区域框（蓝紫虚线）：仅标记框选来源，不是现有遮盖 */
+.repeat-overlay {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.repeat-source {
+  background: rgba(124, 92, 255, 0.2);
+  border: 1.5px dashed #8f7bff;
+  box-shadow: 0 0 0 1px rgba(143, 123, 255, 0.35);
+}
+
+/* 预览：确认后将加入的框（绿色） */
+.repeat-applied {
+  background: rgba(46, 204, 113, 0.22);
+  border: 1.5px dashed #2ecc71;
+}
+
+/* 预览：与已有遮盖重复而跳过（灰色） */
+.repeat-skipped-duplicate {
+  background: rgba(154, 160, 174, 0.14);
+  border: 1.5px dashed #7d8390;
+}
+
+/* 预览：夹取后退化（区域完全落在页外，无可显示面积），仍给极细标记 */
+.repeat-skipped-degenerate {
+  background: rgba(255, 77, 79, 0.18);
+  border: 1px dashed rgba(255, 77, 79, 0.7);
+}
+
+/* 框选中的源区域草稿 */
+.repeat-draft {
+  position: absolute;
+  background: rgba(124, 92, 255, 0.16);
+  border: 1px dashed #8f7bff;
+  pointer-events: none;
+}
+
+.repeat-panel {
+  width: 348px;
+}
+
+.repeat-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.repeat-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.repeat-range-input {
+  min-height: 0;
+  resize: none;
+  height: 38px;
+}
+
+.repeat-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.repeat-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.legend-box {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+  border: 1.5px dashed;
+}
+
+.legend-applied {
+  background: rgba(46, 204, 113, 0.22);
+  border-color: #2ecc71;
+}
+
+.legend-dup {
+  background: rgba(154, 160, 174, 0.14);
+  border-color: #7d8390;
+}
+
+.repeat-page-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.repeat-page-link.current {
+  color: #fff;
+  font-weight: 600;
+}
+
+.repeat-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.repeat-actions button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.repeat-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.repeat-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.repeat-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.repeat-region-info {
+  word-break: break-all;
+  line-height: 1.6;
+}
+
 /* ---------- 文本查找面板 ---------- */
 .find-panel {
   width: 336px;

@@ -10,11 +10,13 @@ interface Props {
   canRedo: boolean;
   exporting: boolean;
   findOpen: boolean;
+  repeatOpen: boolean;
   /** 各页尺寸尚未收集完成时，方案导出暂不可用 */
   canUseScheme: boolean;
   onOpen(): void;
   onToolChange(tool: Tool): void;
   onToggleFind(): void;
+  onToggleRepeat(): void;
   onZoomIn(): void;
   onZoomOut(): void;
   onRotate(): void;
@@ -39,6 +41,7 @@ export function Toolbar(props: Props) {
     canRedo,
     exporting,
     findOpen,
+    repeatOpen,
     canUseScheme,
   } = props;
 
@@ -65,6 +68,17 @@ export function Toolbar(props: Props) {
         title="选择、移动、缩放已有遮盖框"
       >
         选择 / 调整
+      </button>
+
+      <div className="sep" />
+
+      <button
+        className={repeatOpen || tool === 'repeat' ? 'active' : ''}
+        disabled={!hasDoc}
+        onClick={props.onToggleRepeat}
+        title="在当前页框选页眉/页脚等固定区域，按比例批量应用到指定页码范围（纯本地）"
+      >
+        跨页重复区域
       </button>
 
       <div className="sep" />
