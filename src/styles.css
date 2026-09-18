@@ -333,6 +333,170 @@ button.primary {
   border-color: rgba(200, 90, 0, 0.95);
 }
 
+/* ---------- 跨页重复区域预览标记 ---------- */
+.repeat-marker {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* 将加入的目标框：蓝色虚线 + 半透明蓝填充 */
+.repeat-apply {
+  background: rgba(79, 140, 255, 0.22);
+  border: 1.5px dashed #4f8cff;
+}
+
+/* 跳过（与已有遮盖重复）：黄色虚线 */
+.repeat-skip {
+  background: rgba(255, 199, 0, 0.18);
+  border: 1.5px dashed rgba(214, 150, 0, 0.95);
+}
+
+/* 来源框：紫色点划线 */
+.repeat-source {
+  background: rgba(167, 113, 255, 0.16);
+  border: 1.5px dashed #a771ff;
+}
+
+/* ---------- 跨页重复区域面板 ---------- */
+.repeat-panel {
+  gap: 12px;
+}
+
+.repeat-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.repeat-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.repeat-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.repeat-source-info {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.repeat-link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+.repeat-link-btn:hover {
+  text-decoration: underline;
+}
+
+.repeat-range-input {
+  min-height: 0;
+  resize: none;
+}
+
+.repeat-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.repeat-pages-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8fc0ff;
+}
+
+.repeat-pages-tag.skip {
+  color: #ffd9a0;
+}
+
+.repeat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.repeat-chip {
+  min-width: 30px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.repeat-chip:hover {
+  background: rgba(79, 140, 255, 0.18);
+}
+
+.repeat-chip.current {
+  background: var(--accent);
+  color: #fff;
+}
+
+.repeat-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.repeat-actions button {
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.repeat-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.repeat-actions button.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.repeat-actions button.danger-outline {
+  border-color: #8a3636;
+  color: #ff9a9b;
+}
+
+.repeat-actions button.danger-outline:hover {
+  background: #4a1d1d;
+  border-color: var(--danger);
+}
+
 /* ---------- 文本查找面板 ---------- */
 .find-panel {
   width: 336px;

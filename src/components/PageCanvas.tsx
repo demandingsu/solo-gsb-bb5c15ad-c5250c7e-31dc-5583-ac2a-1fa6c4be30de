@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFPageProxy } from 'pdfjs-dist';
 import type { HitRect, RedactionBox, Tool } from '../types';
 import { uid } from '../types';
+import type { RectCoords } from '../pdf/scheme';
 
 /** 视口（CSS 像素）坐标系中的矩形 */
 interface Rect {
@@ -34,6 +35,14 @@ interface Highlight {
   checked: boolean;
 }
 
+/** 跨页重复区域的预览标记（PDF 页面坐标），仅显示不参与交互 */
+export interface RepeatMarker {
+  id: string;
+  rect: RectCoords;
+  /** 'apply' 计划加入；'skip' 与已有遮盖重复 / 夹取为空 */
+  kind: 'apply' | 'skip' | 'source';
+}
+
 interface Props {
   page: PDFPageProxy;
   zoom: number;
@@ -44,6 +53,14 @@ interface Props {
   selectedId: string | null;
   /** 文本查找候选（PDF 页面坐标），画布上高亮显示，不参与交互 */
   highlights: Highlight[];
+  /**
+   * 跨页重复区域框选回调：仅当 pickingRegion 为 true 时，
+   * 「绘制遮盖」模式下拖出的矩形不写入遮盖，而是作为重复区域来源交给该回调。
+   */
+  pickingRegion: boolean;
+  onPickRegion(rect: RectCoords): void;
+  /** 跨页重复预览标记（PDF 页面坐标），画布上虚线显示，不参与交互 */
+  repeatMarkers: RepeatMarker[];
   onSelect(id: string | null): void;
   onAdd(box: RedactionBox): void;
   onChange(box: RedactionBox): void;
@@ -78,6 +95,9 @@ export function PageCanvas({
   boxes,
   selectedId,
   highlights,
+  pickingRegion,
+  onPickRegion,
+  repeatMarkers,
   onSelect,
   onAdd,
   onChange,
@@ -88,6 +108,9 @@ export function PageCanvas({
   const [draft, setDraft] = useState<Draft | null>(null);
   const draftRef = useRef<Draft | null>(null);
   draftRef.current = draft;
+  // window 拖拽回调在组件首次挂载时注册，通过 ref 读取最新框选开关
+  const pickingRegionRef = useRef(pickingRegion);
+  pickingRegionRef.current = pickingRegion;
 
   // 所有坐标换算都经过 viewport：缩放 / 旋转不会改变已保存的页面坐标
   const viewport = useMemo(
@@ -118,7 +141,7 @@ export function PageCanvas({
   }, [page, viewport]);
 
   /** 页面坐标 -> 视口矩形（用于显示） */
-  const boxToRect = (b: RedactionBox): Rect => {
+  const coordsToRect = (b: RectCoords): Rect => {
     const [x1, y1, x2, y2] = viewport.convertToViewportRectangle([b.x1, b.y1, b.x2, b.y2]);
     return {
       left: Math.min(x1, x2),
@@ -127,6 +150,8 @@ export function PageCanvas({
       height: Math.abs(y2 - y1),
     };
   };
+
+  const boxToRect = (b: RedactionBox): Rect => coordsToRect(b);
 
   /** 查找候选框（PDF 页面坐标） -> 视口矩形 */
   const hitRectToRect = (r: HitRect): Rect => {
@@ -199,7 +224,13 @@ export function PageCanvas({
       if (!d || d.rect.width < MIN_SIZE || d.rect.height < MIN_SIZE) return;
       // 拖拽结束时才把结果换算回页面坐标并提交（产生一条撤销记录）
       if (drag.kind === 'draw') {
-        onAdd(rectToBox(d.rect, uid()));
+        const box = rectToBox(d.rect, uid());
+        if (pickingRegionRef.current) {
+          // 跨页重复区域框选模式：矩形不进入遮盖集合，仅作为重复来源
+          onPickRegion({ x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 });
+        } else {
+          onAdd(box);
+        }
       } else {
         onChange(rectToBox(d.rect, drag.id));
       }
@@ -293,6 +324,16 @@ export function PageCanvas({
             }}
           />
         )}
+        {repeatMarkers.map((m) => {
+          const vr = coordsToRect(m.rect);
+          return (
+            <div
+              key={m.id}
+              className={`repeat-marker repeat-${m.kind}`}
+              style={{ left: vr.left, top: vr.top, width: vr.width, height: vr.height }}
+            />
+          );
+        })}
       </div>
     </div>
   );

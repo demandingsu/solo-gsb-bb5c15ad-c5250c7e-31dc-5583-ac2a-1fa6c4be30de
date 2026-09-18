@@ -292,6 +292,24 @@ export function schemeToRedactionMap(scheme: RedactionScheme): RedactionMap {
   return map;
 }
 
+/** 轴对齐矩形（PDF 页面坐标，点） */
+export interface RectCoords {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** 两个矩形四个坐标差值均不超过 MERGE_TOLERANCE（0.01 点）即视为相同 */
+export function sameRectWithinTolerance(a: RectCoords, b: RectCoords): boolean {
+  return (
+    Math.abs(a.x1 - b.x1) <= MERGE_TOLERANCE &&
+    Math.abs(a.y1 - b.y1) <= MERGE_TOLERANCE &&
+    Math.abs(a.x2 - b.x2) <= MERGE_TOLERANCE &&
+    Math.abs(a.y2 - b.y2) <= MERGE_TOLERANCE
+  );
+}
+
 /**
  * “合并”：保留现有遮盖，追加方案中的遮盖；
  * 按页去重：与同页任一已有矩形在四个坐标上的差值都不超过 MERGE_TOLERANCE（0.01 点）
@@ -314,20 +332,11 @@ export function mergeScheme(
     rectsByPage.set(n, boxes.map((b) => ({ x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 })));
   }
 
-  const sameWithinTolerance = (
-    a: SchemePage['boxes'][number],
-    b: SchemePage['boxes'][number],
-  ): boolean =>
-    Math.abs(a.x1 - b.x1) <= MERGE_TOLERANCE &&
-    Math.abs(a.y1 - b.y1) <= MERGE_TOLERANCE &&
-    Math.abs(a.x2 - b.x2) <= MERGE_TOLERANCE &&
-    Math.abs(a.y2 - b.y2) <= MERGE_TOLERANCE;
-
   for (const sp of scheme.pages) {
     const known = rectsByPage.get(sp.page) ?? [];
     const list = map[sp.page] ?? [];
     for (const b of sp.boxes) {
-      if (known.some((k) => sameWithinTolerance(k, b))) {
+      if (known.some((k) => sameRectWithinTolerance(k, b))) {
         skipped += 1;
         continue;
       }

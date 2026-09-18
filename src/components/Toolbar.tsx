@@ -10,11 +10,13 @@ interface Props {
   canRedo: boolean;
   exporting: boolean;
   findOpen: boolean;
+  repeatOpen: boolean;
   /** 各页尺寸尚未收集完成时，方案导出暂不可用 */
   canUseScheme: boolean;
   onOpen(): void;
   onToolChange(tool: Tool): void;
   onToggleFind(): void;
+  onToggleRepeat(): void;
   onZoomIn(): void;
   onZoomOut(): void;
   onRotate(): void;
@@ -39,6 +41,7 @@ export function Toolbar(props: Props) {
     canRedo,
     exporting,
     findOpen,
+    repeatOpen,
     canUseScheme,
   } = props;
 
@@ -76,6 +79,14 @@ export function Toolbar(props: Props) {
         title="按词组在全文中查找并批量生成遮盖框（纯本地）"
       >
         文本查找遮盖
+      </button>
+      <button
+        className={repeatOpen ? 'active' : ''}
+        disabled={!hasDoc}
+        onClick={props.onToggleRepeat}
+        title="在当前页框选页眉/页脚等区域，按页面比例复制到指定页码（预览后确认，纯本地）"
+      >
+        跨页重复区域
       </button>
 
       <div className="sep" />

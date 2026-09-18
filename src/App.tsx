@@ -12,6 +12,13 @@ import {
   scanDocument,
 } from './pdf/textSearch';
 import {
+  applyRepeatPlan,
+  buildRepeatPlan,
+  parsePageRanges,
+  type RepeatPlan,
+} from './pdf/repeatRegion';
+import type { RectCoords } from './pdf/scheme';
+import {
   buildScheme,
   countSchemeBoxes,
   downloadScheme,
@@ -25,8 +32,9 @@ import {
 import { sha256Hex } from './pdf/sha256';
 import { Toolbar } from './components/Toolbar';
 import { PageList } from './components/PageList';
-import { PageCanvas } from './components/PageCanvas';
+import { PageCanvas, type RepeatMarker } from './components/PageCanvas';
 import { FindPanel, type FindStatus } from './components/FindPanel';
+import { RepeatPanel } from './components/RepeatPanel';
 import { ImportDialog } from './components/ImportDialog';
 
 const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -69,6 +77,13 @@ export default function App() {
   const cancelToken = useRef(0);
   const pageTextCache = useRef<Map<number, PageText>>(new Map());
 
+  // ---- 跨页重复区域 ----
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const [repeatSource, setRepeatSource] = useState<{ page: number; rect: RectCoords } | null>(null);
+  const [repeatRange, setRepeatRange] = useState('');
+  const [repeatPlan, setRepeatPlan] = useState<RepeatPlan | null>(null);
+  const [repeatError, setRepeatError] = useState<string | null>(null);
+
   const {
     value: redactions,
     set: setRedactions,
@@ -82,6 +97,18 @@ export default function App() {
   const numPages = doc?.numPages ?? 0;
   const boxesForPage = redactions[pageNum] ?? [];
   const totalBoxes = Object.values(redactions).reduce((sum, list) => sum + list.length, 0);
+
+  // 预览期间遮盖被其他途径修改（撤销 / 手工增删）时，按最新遮盖刷新重复标记，
+  // 保证「确认加入」的跳过判断与界面一致
+  useEffect(() => {
+    setRepeatPlan((plan) =>
+      plan
+        ? buildRepeatPlan(plan.source, plan.targets, pageSizes, redactions)
+        : plan,
+    );
+    // 仅以遮盖集合变化为触发条件；pageSizes 在文档加载后不变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redactions]);
 
   // 供搜索 / 批量应用回调读取最新遮盖集合，避免闭包过期
   const redactionsRef = useRef(redactions);
@@ -124,6 +151,11 @@ export default function App() {
         setSkippedCount(0);
         setAppliedCount(0);
         setFindStatus({ kind: 'idle' });
+        setRepeatOpen(false);
+        setRepeatSource(null);
+        setRepeatRange('');
+        setRepeatPlan(null);
+        setRepeatError(null);
       } catch {
         setError('无法解析该文件，请确认是有效的 PDF。');
       }
@@ -406,6 +438,121 @@ export default function App() {
     setFindOpen(false);
   }, []);
 
+  // ================= 跨页重复区域 =================
+
+  /** 打开 / 关闭面板：互斥于查找面板；打开时切到绘制模式以便框选区域 */
+  const toggleRepeat = useCallback(() => {
+    setRepeatOpen((open) => {
+      const next = !open;
+      if (next) {
+        setFindOpen(false);
+        setTool('draw');
+      } else {
+        setRepeatSource(null);
+        setRepeatPlan(null);
+        setRepeatError(null);
+        setRepeatRange('');
+      }
+      return next;
+    });
+  }, []);
+
+  const closeRepeat = useCallback(() => {
+    // 取消 / 关闭不得修改任何现有遮盖，只清面板状态
+    setRepeatOpen(false);
+    setRepeatSource(null);
+    setRepeatPlan(null);
+    setRepeatError(null);
+    setRepeatRange('');
+  }, []);
+
+  /** 画布框选结束：矩形以当前页 PDF 坐标记录为重复来源（不写入遮盖） */
+  const pickRepeatRegion = useCallback(
+    (rect: RectCoords) => {
+      if (!repeatOpen) return;
+      setRepeatSource({ page: pageNum, rect });
+      setRepeatPlan(null);
+      setRepeatError(null);
+    },
+    [repeatOpen, pageNum],
+  );
+
+  const onRepeatRangeChange = useCallback((v: string) => {
+    setRepeatRange(v);
+    setRepeatError(null);
+    setRepeatPlan(null); // 范围变化后旧预览失效
+  }, []);
+
+  const clearRepeatSource = useCallback(() => {
+    setRepeatSource(null);
+    setRepeatPlan(null);
+  }, []);
+
+  /** 解析页码范围并按页面比例生成各目标页预览（纯计算，不改遮盖） */
+  const previewRepeat = useCallback(() => {
+    if (!doc || !repeatSource || pageSizes.length !== doc.numPages) return;
+    const targets = parsePageRanges(repeatRange, doc.numPages);
+    if (!targets) {
+      setRepeatError(
+        `页码范围无效：请使用 1-3,5 这样的写法（1–${doc.numPages}），页码超出文档范围的部分可省略。`,
+      );
+      setRepeatPlan(null);
+      return;
+    }
+    setRepeatError(null);
+    setRepeatPlan(buildRepeatPlan(repeatSource, targets, pageSizes, redactionsRef.current));
+  }, [doc, repeatSource, repeatRange, pageSizes]);
+
+  const cancelRepeatPreview = useCallback(() => {
+    setRepeatPlan(null);
+  }, []);
+
+  /**
+   * 确认预览：一次 setRedactions 批量加入全部不重复的映射框，整批仅一条撤销记录。
+   * 重复 / 退化页跳过，界面提示分别列出应用页与跳过页。
+   */
+  const applyRepeat = useCallback(() => {
+    if (!repeatPlan) return;
+    const { map, appliedPages, skippedPages } = applyRepeatPlan(
+      redactionsRef.current,
+      repeatPlan,
+      uid,
+    );
+    if (appliedPages.length === 0) return;
+    setRedactions(map);
+    setSelectedId(null);
+    setNotice(
+      `跨页重复区域已加入 ${appliedPages.length} 页${
+        skippedPages.length > 0 ? `，${skippedPages.length} 页重复 / 越界已跳过` : ''
+      }（整批为一条撤销记录）。`,
+    );
+    closeRepeat();
+  }, [repeatPlan, setRedactions, closeRepeat]);
+
+  /** 当前页跨页重复预览标记：来源区域 + 目标页映射框（应用 / 跳过分别着色） */
+  const repeatMarkers = useMemo<RepeatMarker[]>(() => {
+    if (!repeatOpen || !repeatSource) return [];
+    const markers: RepeatMarker[] = [];
+    if (repeatPlan) {
+      for (const pv of repeatPlan.previews) {
+        if (pv.page !== pageNum || !pv.rect) continue;
+        // 来源页本身也在目标中时，目标标记优先（可显示应用 / 跳过状态）
+        markers.push({
+          id: `repeat-target-${pv.page}`,
+          rect: pv.rect,
+          kind: pv.duplicate ? 'skip' : 'apply',
+        });
+      }
+    }
+    const targetShownOnSource =
+      repeatSource.page === pageNum &&
+      repeatPlan?.targets.includes(pageNum);
+    if (!targetShownOnSource) {
+      markers.push({ id: 'repeat-source', rect: repeatSource.rect, kind: 'source' });
+    }
+    return markers;
+  }, [repeatOpen, repeatSource, repeatPlan, pageNum]);
+
   const zoomIn = () => setZoom((z) => ZOOM_LEVELS.find((l) => l > z + 0.001) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1]);
   const zoomOut = () => setZoom((z) => [...ZOOM_LEVELS].reverse().find((l) => l < z - 0.001) ?? ZOOM_LEVELS[0]);
 
@@ -558,10 +705,18 @@ export default function App() {
         canRedo={canRedo}
         exporting={exporting}
         findOpen={findOpen}
+        repeatOpen={repeatOpen}
         canUseScheme={!!doc && pageSizes.length === numPages && sourceHash.length === 64}
         onOpen={() => fileInputRef.current?.click()}
         onToolChange={setTool}
-        onToggleFind={() => setFindOpen((v) => !v)}
+        onToggleFind={() => {
+          setFindOpen((v) => {
+            const next = !v;
+            if (next) setRepeatOpen(false);
+            return next;
+          });
+        }}
+        onToggleRepeat={toggleRepeat}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onRotate={() => setRotation((r) => (r + 90) % 360)}
@@ -596,6 +751,9 @@ export default function App() {
                 boxes={boxesForPage}
                 selectedId={selectedId}
                 highlights={currentHighlights}
+                pickingRegion={repeatOpen}
+                onPickRegion={pickRepeatRegion}
+                repeatMarkers={repeatMarkers}
                 onSelect={setSelectedId}
                 onAdd={addBox}
                 onChange={changeBox}
@@ -624,6 +782,24 @@ export default function App() {
               noTextPages={noTextPages}
               skippedCount={skippedCount}
               appliedCount={appliedCount}
+            />
+          )}
+          {repeatOpen && (
+            <RepeatPanel
+              numPages={numPages}
+              sourcePage={repeatSource?.page ?? pageNum}
+              sourceRect={repeatSource?.rect ?? null}
+              rangeInput={repeatRange}
+              onRangeInputChange={onRepeatRangeChange}
+              onPreview={previewRepeat}
+              onApply={applyRepeat}
+              onCancelPreview={cancelRepeatPreview}
+              onClearSource={clearRepeatSource}
+              onClose={closeRepeat}
+              onJump={setPageNum}
+              currentPage={pageNum}
+              error={repeatError}
+              plan={repeatPlan}
             />
           )}
         </div>
